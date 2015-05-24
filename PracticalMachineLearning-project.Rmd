@@ -1,0 +1,137 @@
+Practical Machine Learning: Project
+=======
+
+## Introduction
+
+Based on an experiment (see http://groupware.les.inf.puc-rio.br/har#ixzz3b5pHfEjG) on Human Activity Recognition in the realm of fitness, more precisely barbell lifts, data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants performing  10 repetitions of the Unilateral Dumbbell Biceps Curl were collected while the participants were performing in five different fashions or classes: 
+
+- exactly according to the specification (Class A)
+- throwing the elbows to the front (Class B)
+- lifting the dumbbell only halfway (Class C)
+- lowering the dumbbell only halfway (Class D) 
+- throwing the hips to the front (Class E).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3b5pHfEjG
+
+In this paper we construct a predictive model for determining the type (classe or fashion0 of task performed (A, B, C, D or E) based on a set of predictors to be determined by the study.
+
+```{r libs, echo=FALSE}
+library(caret)
+```
+
+## Loading and selecting data
+
+The data zere loaded fom https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv and https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv.
+
+The testing data has been ignored until actual submisison of the predictions, but all tranformations have been applied to ensure applicability of the predictions.
+
+```{r load_raw_data, cache=TRUE}
+rawTrainingData <- read.csv("pml-training.csv")
+rawTestingData <- read.csv("pml-testing.csv")
+```
+
+The training data set loaded in  CSV format contains `r dim(rawTrainingData)[1]` observations of `r dim(rawTrainingData)[2]` variables.
+
+```{r select_columns, cache=TRUE}
+trainingcols <- names(rawTrainingData)
+belt_str <- grep("_belt$", trainingcols, value = TRUE)
+forearm_str <- grep("_forearm$", trainingcols, value = TRUE)
+arm_str <- grep("_arm$", trainingcols, value = TRUE)
+dumbbell_str <- grep("_dumbbell$", trainingcols, value = TRUE)
+all_str <- grep("_belt$|_forearm$|_arm$|_dumbbell$", trainingcols, value = TRUE)
+trainingData1 <- rawTrainingData[,c("classe", all_str)]
+```
+
+Considering data from accelerometers on the belt, forearm, arm, and dumbbell reduces the number of columns to `r length(all_str)`
+
+Upon examination of the data it was clear that:
+
+- some columns contain mostly invalid data
+- as the problem is one of classification, we intend to use a Random Forest algorithm, and will thus ignore fields ending zith _x, _y, or _z, as they are already aggregated into other variables (we would reintroduce them if needed, based on the accurarcy of the model )
+
+The outcome is a list of `r length(c("classe", all_str))`, including the **classe**.
+
+## Study Design
+
+As the training and testing sets have been split prior to the study, we will:
+
+- Apply a very simple cross validation approach, where the training set is further divided into training and cross-validation sets
+- Build a model on the new, smaller training set
+- Evaluate accuracy on the cross-validation set
+
+We would adopt more complex cross-validation if needed, which was not the case for this study.
+
+As this is a supervised classification problem, we use a Random Forest approach, assuming it will give best accuracy, and is affordable given the reduction on columns performed above.
+
+## Pre-Processing
+
+As a first step we drop all the columns with near-zero variability.
+
+```{r near_zero, cache=TRUE}
+nzvars <- nearZeroVar(trainingData1,saveMetrics = TRUE)
+var_str <- rownames(nzvars[nzvars$nzv==FALSE,])
+trainingData2 <- trainingData1[,var_str]
+```
+
+Then we drop columns in which there are ore than 50% NA or missing values.
+
+```{r missing, cache=TRUE}
+trainingData3 <- trainingData2[ , -which( colSums(is.na(trainingData2)) > nrow(trainingData2)/2 ) ]
+tr_cols <- colnames(trainingData3)
+testing <- rawTestingData[,tr_cols[-1]]
+```
+
+We are now down to `r length(tr_cols)` columns.
+
+## Split into training and cross validation data sets
+
+```{r split_for_cross, cache=TRUE}
+set.seed(12031987)
+inTrain = createDataPartition(trainingData3$classe, p = 3/4, list=FALSE)
+training = trainingData3[inTrain,]
+crossValidation = trainingData3[-inTrain,]
+```
+
+## Predicting using Random Forests
+
+```{r train_rpart, cache=TRUE}
+modFit <- train(classe ~., method="rf", data=training)
+print(modFit$finalModel)
+```
+
+Accuracy on training set: the in-sample error is zero, which is nice but may be a proof of overfitting.
+
+```{r in_sample, cache=TRUE}
+trainingPred <- predict(modFit, training)
+confusionMatrix(trainingPred, training$classe)
+```
+
+Accuracy on cross validation set: the out-of-sample error is less then 2 percent, with high statistical significance, so we retain this model as a good predictive model to be used for sub;itting the results.
+
+```{r out_sample}
+crossPred <- predict(modFit, crossValidation)
+confusionMatrix(crossPred, crossValidation$classe)
+```
+
+## Actual code for submission
+
+Generating the predictions:
+
+```{r predict}
+testingDataProcessed <- rawTestingData[,tr_cols[-1]]
+testingPred <- predict(modFit,newdata=testingDataProcessed)
+testingPred
+```
+
+Writing answer files:
+
+```{r write_files}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(testingPred)
+```
